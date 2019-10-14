@@ -1,3 +1,11 @@
+#add date package
+#library(lubridate)
+#library(dplyr)
+#install.packages("reprex")
+#library(reprex)
+#library(ggplot2)
+
+
 build_clean_dataset <- function() {
   datasetloc = "C:/Users/abdel/Desktop/Ryerson University/capstone/capstone/R/Health_Care_History.csv"
   if (file.exists(datasetloc)) {
