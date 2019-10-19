@@ -1,5 +1,5 @@
 #add date package
-#library(lubridate)
+library(lubridate)
 #library(dplyr)
 #install.packages("reprex")
 #library(reprex)
@@ -9,7 +9,8 @@
 build_clean_dataset <- function() {
   datasetloc = "C:/Users/abdel/Desktop/Ryerson University/capstone/capstone/R/Health_Care_History.csv"
   if (file.exists(datasetloc)) {
-    alldata <- read.csv(file=datasetloc, stringsAsFactors = FALSE, header = T)
+    #alldata <- read.csv(file=datasetloc, stringsAsFactors = FALSE, header = T)
+    alldata <- read.csv(file=datasetloc, header = T)
   }
   return(alldata)
 }
@@ -38,29 +39,36 @@ get_ethnic_group <- function(country) {
                               country))))
 }
 
+get_binary_value <- function(value, compare_to) {
+  ifelse(value==compare_to,1,0)
+}
+
 #Start cleaning up dataset
 patients <- build_clean_dataset()
 str(patients)
 
 #fix the education column values and look for misspelled words
-patients$education <- ifelse(patients$education == 'highscool', 'highschool', patients$education)
-patients$education <- ifelse(patients$education == 'phD/MD', 'phd/md', patients$education)
-
+patients$education <- ifelse(patients$education == 'highscool', as.character('highschool'), as.character(patients$education))
+patients$education <- ifelse(as.factor(patients$education) == 'phD/MD', as.character('phd/md'), as.character(patients$education))
+patients$education <- as.factor(patients$education)
 
 #group the ancestry countries to ethnic groups
-patients$ancestry <- get_ethnic_group(patients$ancestry)
+patients$ancestry <- as.factor(get_ethnic_group(patients$ancestry))
+
+patients$age <- age(patients$dob)
+patients$age <- get_age_group(age(patients$dob))
 
 #split the diseases into columns with binary values
-patients$cancers <- get_binary_value(patients$disease,'cancer')
-patients$diabetes <- get_binary_value(patients$disease,'diabetes')
-patients$heart_disease <- get_binary_value(patients$disease,'heart disease')
-patients$hypertension <- get_binary_value(patients$disease,'hypertension')
-patients$endometriosis <- get_binary_value(patients$disease,'endometriosis')
-patients$multiple_sclerosis <- get_binary_value(patients$disease,'multiple sclerosis')
-patients$schizophrenia <- get_binary_value(patients$disease,'schizophrenia')
-patients$kidney_disease <- get_binary_value(patients$disease,'kidney disease')
-patients$gastritis <- get_binary_value(patients$disease,'gastritis')
-patients$alzheimer <- get_binary_value(patients$disease,'alzheimer')
+#patients$cancers <- get_binary_value(patients$disease,'cancer')
+#patients$diabetes <- get_binary_value(patients$disease,'diabetes')
+#patients$heart_disease <- get_binary_value(patients$disease,'heart disease')
+#patients$hypertension <- get_binary_value(patients$disease,'hypertension')
+#patients$endometriosis <- get_binary_value(patients$disease,'endometriosis')
+#patients$multiple_sclerosis <- get_binary_value(patients$disease,'multiple sclerosis')
+#patients$schizophrenia <- get_binary_value(patients$disease,'schizophrenia')
+#patients$kidney_disease <- get_binary_value(patients$disease,'kidney disease')
+#patients$gastritis <- get_binary_value(patients$disease,'gastritis')
+#patients$alzheimer <- get_binary_value(patients$disease,'alzheimer')
 
 #draw a bar plot to count the total number of diseases in the dataset
 counts <- table(patients$disease)
