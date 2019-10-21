@@ -32,6 +32,11 @@ north_europe <- c('Sweden', 'Finland', 'Denmark')
 british <- c('England','Scotland','Ireland')
 
 get_ethnic_group <- function(country) {
+#  ifelse((country %in% east_europe), 1,
+#         ifelse((country %in% west_europe) ,2,
+#                ifelse((country %in% north_europe), 3,
+#                       ifelse((country %in% british), 4,
+#                              country))))
   ifelse((country %in% east_europe), 'east_europe',
          ifelse((country %in% west_europe) ,'west_europe',
                 ifelse((country %in% north_europe), 'north_europe',
@@ -58,6 +63,19 @@ patients$ancestry <- as.factor(get_ethnic_group(patients$ancestry))
 patients$age <- age(patients$dob)
 patients$age <- get_age_group(age(patients$dob))
 
+count(patients,patients$education)
+count(patients,patients$employment_status)
+count(patients,patients$age)
+count(patients,patients$gender)
+patients[ which(patients$employment_status=='employed' & patients$age > 65), ]
+patients[ which(patients$employment_status=='retired' & patients$age > 65), ]
+patients[ which(patients$employment_status=='student' & patients$gender == 'male' & patients$disease == 'breast cancer'), ]
+patients[ which(patients$employment_status=='student'), ]
+patients[ which(patients$employment_status=='unemployed'), ]
+patients[ which(patients$gender == 'female' & patients$disease == 'breast cancer'), ]
+
+
+
 #split the diseases into columns with binary values
 #patients$cancers <- get_binary_value(patients$disease,'cancer')
 #patients$diabetes <- get_binary_value(patients$disease,'diabetes')
@@ -68,7 +86,15 @@ patients$age <- get_age_group(age(patients$dob))
 #patients$schizophrenia <- get_binary_value(patients$disease,'schizophrenia')
 #patients$kidney_disease <- get_binary_value(patients$disease,'kidney disease')
 #patients$gastritis <- get_binary_value(patients$disease,'gastritis')
-#patients$alzheimer <- get_binary_value(patients$disease,'alzheimer')
+#patients$alzheimer <- get_binary_value(patients$disease,'Alzheimer disease')
+
+#patients$gender <- ifelse(patients$gender == 'male', 0, 1)
+#patients$marital_status <- ifelse(patients$marital_status == 'single', 0, 1)
+#patients$military_service <- ifelse(patients$military_service == 'no', 0, 1)
+
+str(patients)
+#write.table(patients,file="C:/Users/abdel/Desktop/Ryerson University/capstone/capstone/R/new.csv", sep=",")
+
 
 #draw a bar plot to count the total number of diseases in the dataset
 counts <- table(patients$disease)
