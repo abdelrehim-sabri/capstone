@@ -1,0 +1,301 @@
+---
+title: "initial_result_code"
+author: "Abdelrehim Sabri (500998232)"
+date: '2019-11-04'
+output:
+  word_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+Every ethnic group has a different diet and lifestyle. When people moved to North America, they brought their eating habits, level of education, and life style with them. The large size and highly diverse population resulted in different types of diseases that effected different age and ethnic groups.
+“Diagnosis has important implications for patient care. When a diagnosis is accurate and made in a timely manner, a patient has the best opportunity for positive health outcome because clinical decision making well be tailored to a correct understanding of the patient's health problem.” [1]
+The research question is to define what factors are relevant to predicting the disease the patient might have. Also, who might be susceptible to which type of disease.
+After exploring the data, there is a possibility that a patient might have multiple diseases. Therefore, each instance can be assigned with multiple categories, as such, this type of problem needs to use multi-label classification.
+
+## Install R packages
+
+```{r install_rmarkdown, eval=FALSE}
+#install.packages("rpart")
+#install.packages("caret")
+#install.packages("e1071")
+#install.packages("randomForest")
+#install.packages("corrplot")
+```
+
+## Prepare for analyses
+
+```{r }
+set.seed(1234)
+library(lubridate)
+library(ggplot2)
+library(randomForest)
+library(dplyr)
+library(rpart)
+library(caret)
+library(e1071)
+library(corrplot)
+```
+
+## Includes functions to clean datasets
+
+Read datasets from csv file
+```{r }
+build_clean_dataset <- function() {
+  datasetloc = "C:/Users/abdel/Desktop/Ryerson University/capstone/capstone/R/Health_Care_History.csv"
+  if (file.exists(datasetloc)) {
+    alldata <- read.csv(file=datasetloc, header = T)
+  }
+  return(alldata)
+}
+```
+
+Convert the date to age and group them into four groups (0-25, 26-40, 41-50, 50-65, 65+)
+```{r }
+age <- function(dob, age.day = today(), units = "years", floor = TRUE) {
+  calc.age = interval(dob, age.day) / duration(num = 1, units = units)
+  if (floor) return(as.integer(floor(calc.age)))
+  
+  return(calc.age)
+}
+
+get_age_group <- function(a) {
+  ifelse(a<25,25, ifelse(a<40, 40, ifelse(a<50,50,65)))
+}
+```
+
+Group the countries of the patients based on ethnic groups
+```{r }
+east_europe <- c('Ukraine','Russia','Poland','Czech Republic','Hungary')
+west_europe <- c('Austria','Belgium','France','Germany','Italy','Netherlands','Portugal','Spain','Switzerland')
+north_europe <- c('Sweden', 'Finland', 'Denmark')
+british <- c('England','Scotland','Ireland')
+
+get_ethnic_group <- function(country) {
+  ifelse((country %in% east_europe), 'east_europe',
+         ifelse((country %in% west_europe) ,'west_europe',
+                ifelse((country %in% north_europe), 'north_europe',
+                       ifelse((country %in% british), 'british',
+                              country))))
+}
+```
+
+Read the dataset and remove patient ids from the analysis 
+```{r}
+patients <- build_clean_dataset()
+
+#remove the patient ids from the dataset
+patients <- patients[,-1]
+str(patients)
+```
+
+Fix the education column values by fixing the misspelled words
+```{r}
+patients$education <- ifelse(patients$education == 'highscool', as.character('highschool'), as.character(patients$education))
+patients$education <- ifelse(as.factor(patients$education) == 'phD/MD', as.character('phd/md'), as.character(patients$education))
+patients$education <- as.factor(patients$education)
+```
+
+Group the ancestry countries to ethnic groups
+```{r}
+patients$ancestry <- as.factor(get_ethnic_group(patients$ancestry))
+```
+
+Convert the date of birth into age and group them into 25 40 50 65
+```{r}
+patients$age <- age(patients$dob)
+#patients$age <- get_age_group(age(patients$dob))
+```
+
+For the analysis purposes, move each disease to separate column with binary values, where 0: patient does not has the disease and 1: patient has the disease 
+```{r}
+get_binary_value <- function(value, compare_to) {
+  ifelse(value==compare_to,1,0)
+}
+patients$prostate_cancer <- get_binary_value(patients$disease,'prostate cancer')
+patients$skin_cancer <- get_binary_value(patients$disease,'skin cancer')
+patients$breast_cancer <- get_binary_value(patients$disease,'breast cancer')
+patients$hiv_aids <- get_binary_value(patients$disease,'HIV/AIDS')
+patients$diabetes <- get_binary_value(patients$disease,'diabetes')
+patients$heart_disease <- get_binary_value(patients$disease,'heart disease')
+patients$hypertension <- get_binary_value(patients$disease,'hypertension')
+patients$endometriosis <- get_binary_value(patients$disease,'endometriosis')
+patients$multiple_sclerosis <- get_binary_value(patients$disease,'multiple sclerosis')
+patients$schizophrenia <- get_binary_value(patients$disease,'schizophrenia')
+patients$kidney_disease <- get_binary_value(patients$disease,'kidney disease')
+patients$gastritis <- get_binary_value(patients$disease,'gastritis')
+patients$alzheimer <- get_binary_value(patients$disease,'Alzheimer disease')
+str(patients)
+```
+
+Draw a bar plot to count the total number of diseases in the dataset
+```{r}
+par(las=2) # make label text perpendicular to axis
+par(mar=c(5,8,4,2)) # increase y-axis margin.
+
+disease_counts <- table(patients$disease)
+barplot(sort(disease_counts, decreasing = TRUE), main="Disease Names", 
+        xlab="Diseases Frequency", 
+        col=rainbow(20),
+        horiz=TRUE,
+        cex.names=0.8,
+        xlim = c(0, 350))
+```
+
+Observation : Male are more sick than Female
+```{r}
+gender_counts <- table(patients$gender)
+barplot(sort(gender_counts, decreasing = TRUE), main="Gender", 
+        col=rainbow(20), las=1)
+```
+
+Observation : age group that are more sick
+```{r}
+age_breaks <- c(0,25,40,65,100)
+tags <- c("[0-25)","[26-40)", "[41-65)", "[65+)")
+age_group_tags <- cut(patients$age, 
+                  breaks=age_breaks, 
+                  include.lowest=TRUE, 
+                  right=FALSE, 
+                  labels=tags)
+summary(age_group_tags)
+#age_counts <- table(patients$age)
+age_counts <- table(age_group_tags)
+barplot(sort(age_counts, decreasing = TRUE), main="Age",
+        col=rainbow(20), las=1)
+```
+
+Observation : Disease and Gender distrubution
+```{r}
+disease_name = c(as.character(unique(patients$disease)))
+
+for (d in disease_name) {
+  gender_disease_counts <- subset(patients, patients$disease == d)
+  gender_disease_counts <- table(gender_disease_counts$gender)
+  barplot(gender_disease_counts, main=d, col=rainbow(20), las=1)
+}
+```
+
+Observation : Disease and ancestry distrubution
+```{r}
+for (d in disease_name) {
+  ancestry_disease_counts <- subset(patients, patients$disease == d)
+  ancestry_disease_counts <- table(ancestry_disease_counts$ancestry)
+  barplot(ancestry_disease_counts, main=d, col=rainbow(20), las=1)
+}
+```
+
+Observation : Disease and age distrubution
+```{r}
+for (d in disease_name) {
+  age_disease_counts <- subset(patients, patients$disease == d)
+  #age_disease_counts <- table(age_disease_counts$age_group_tags)
+  age_disease_counts <- table(age_disease_counts$age)
+  barplot(age_disease_counts, main=d, col=rainbow(20), las=1)
+}
+```
+
+Observation : Disease and employment status distrubution
+```{r}
+for (d in disease_name) {
+  emp_disease_counts <- subset(patients, patients$disease == d)
+  emp_disease_counts <- table(emp_disease_counts$employment_status)
+  barplot(emp_disease_counts, main=d, col=rainbow(20), las=1)
+}
+```
+## Results
+
+The data from the clened dataset were explored using basic R functions to determine reasonable candidate features for the model. The cleaned dataset contains 13 potential classes. However, only 5 were used to reduce computation.
+
+## Partitioning
+
+The data were partitioned into a test and training set using a 70/30 split.
+```{r}
+set.seed(100)
+train <- sample(nrow(patients), 0.7*nrow(patients), replace = FALSE)
+TrainSet <- patients[train,]
+ValidSet <- patients[-train,]
+summary(TrainSet)
+summary(ValidSet)
+```
+
+## Analysing the hypertension disease
+
+The dataset will predict the hypertension disease with selected attributes that contributes to the analysis 
+```{r}
+hyper_TrainSet <- select(TrainSet, gender, age, employment_status, education, marital_status, ancestry, hypertension)
+hyper_ValidSet <- select(ValidSet, gender, age, employment_status, education, marital_status, ancestry, hypertension)
+hyper_TrainSet$hypertension <- as.factor(hyper_TrainSet$hypertension)
+```
+
+
+## Logistic Regression Model
+
+The model was fit using a binomial logistic regression with the glm function in R, with family = binomial on the training data.
+```{r}
+fit <- glm(hypertension~.,data=hyper_TrainSet,family=binomial())
+summary(fit) # display results
+confint(fit) # 95% CI for the coefficients
+exp(coef(fit)) # exponentiated coefficients
+exp(confint(fit)) # 95% CI for exponentiated coefficients
+#predict(fit, type="response") # predicted values
+#residuals(fit, type="deviance") # residuals
+```
+
+
+## Performace
+
+Probabilites for the response varable based on the test data were assigned using the predict functin.
+```{r}
+#probs <- predict(fit, test, type = "response")
+#pred <- predict(fit, newdata = ValidSet)
+#pred
+```
+
+## Confusion Matrix
+```{r}
+#confusionMatrix(pred, ValidSet$hypertension)
+```
+
+
+## Randomforest model
+
+Apply randomforest model
+```{r}
+# Fine tuning parameters of Random Forest model
+model2 <- randomForest(hypertension ~ ., data = hyper_TrainSet,  importance = TRUE)
+model2
+
+# Predicting on train set
+predTrain <- predict(model2, hyper_TrainSet, type = "class")
+
+# Checking classification accuracy
+table(predTrain, hyper_TrainSet$hypertension) 
+#model2 <- na.omit(model2) 
+
+# Predicting on Validation set
+predValid <- predict(model2, hyper_ValidSet, type = "class")
+
+# Checking classification accuracy
+mean(predValid == hyper_ValidSet$hypertension)                    
+table(predValid,hyper_ValidSet$hypertension)
+
+
+# To check important variables
+importance(model2)        
+varImpPlot(model2) 
+```
+
+## Naive Bayes Model
+
+```{r}
+NBclassfier = naiveBayes(hypertension~., data=hyper_TrainSet)
+print(NBclassfier)
+```
+
+
