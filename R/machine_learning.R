@@ -13,21 +13,37 @@ library(e1071)
 library(corrplot)
 
 #exclude the patient id from analysis
-patients = select(patients, 2, 5:9,12:15)
+#patients = select(patients, 2, 5:9,12:15)
+#patients = select(patients, 2, 5:28)
 head(patients)
-
+str(patients)
 
 # Convert all column types to factor
 # col_names <- names(patients)
 # patients[,col_names] <- lapply(patients[,col_names] , factor)
  
-col_names <- names(patients)
+#col_names <- names(patients)
 #col_names <- c('zipcode','age')
-patients[,col_names] <- lapply(patients[,col_names] , factor)
+#patients[,col_names] <- lapply(patients[,col_names] , factor)
 
 str(patients)
 
 summary(patients)
+
+# c("pearson", "kendall", "spearman")
+#patients[,col_names] <- lapply(patients[,col_names] , numeric)
+# find correlation between variables
+#cor.test(as.numeric(patients$education), as.numeric(patients$disease), method = "spearman")
+#cor.test(patients$age, as.numeric(patients$education), method = "pearson")
+#cor.test(patients$age, as.numeric(patients$education), method = "kendall")
+#cor.test(patients$age, as.numeric(patients$education), method = "spearman")
+#cor.test(patients$education, patients$education)
+#cor.test(as.numeric(patients$education), as.numeric(patients$employment_status))
+#cor.test(as.numeric(patients$education), as.numeric(patients$ancestry))
+#cor.test(patients$employment_status, patients$children)
+#cor.test(patients$disease, patients$available_vehicles)
+
+
 
 set.seed(100)
 
@@ -39,22 +55,11 @@ ValidSet <- patients[-train,]
 summary(TrainSet)
 summary(ValidSet)
 
-model1 <- randomForest(employment_status ~ ., data = TrainSet, importance = TRUE)
+model1 <- randomForest(employment_status ~ prostate_cancer+skin_cancer+breast_cancer+hiv_aids+diabetes+heart_disease+hypertension+endometriosis+multiple_sclerosis+schizophrenia+kidney_disease+gastritis+alzheimer, data = TrainSet)
 model1
-#randomForest(employment_status ~ gender+marital_status+children+ancestry+avg_commute+daily_internet_use+available_vehicles+disease+age  , data = TrainSet, importance = TRUE)
-#randomForest(employment_status ~ gender+ancestry+marital_status+children+disease+age+available_vehicles+education  , data = TrainSet, importance = TRUE)
-
-
-
-#randomForest(ancestry ~ age+gender+education+employment_status+children+marital_status, data = TrainSet, importance = TRUE)
-
-#logistic.model <- glm(ancestry ~ age+gender+education+employment_status, family = "binomial", data = TrainSet)
-#summary(logistic.model)
-#logistic.model <- glm(education ~ gender+zipcode+employment_status+marital_status+children+ancestry+avg_commute+daily_internet_use+available_vehicles+disease+age, family = "binomial", data = TrainSet)
-
 
 # Fine tuning parameters of Random Forest model
-model2 <- randomForest(employment_status ~ ., data = TrainSet, ntree = 500, mtry = 3, importance = TRUE)
+model2 <- randomForest(employment_status ~ prostate_cancer+skin_cancer+breast_cancer+hiv_aids+diabetes+heart_disease+hypertension+endometriosis+multiple_sclerosis+schizophrenia+kidney_disease+gastritis+alzheimer, data = TrainSet, ntree = 500, mtry = 3, importance = TRUE)
 model2
 
 # Predicting on train set
@@ -80,7 +85,7 @@ varImpPlot(model2)
 a=c()
 i=5
 for (i in 3:8) {
-  model3 <- randomForest(employment_status ~ ., data = TrainSet, ntree = 500, mtry = i, importance = TRUE)
+  model3 <- randomForest(employment_status ~ prostate_cancer+skin_cancer+breast_cancer+hiv_aids+diabetes+heart_disease+hypertension+endometriosis+multiple_sclerosis+schizophrenia+kidney_disease+gastritis+alzheimer, data = TrainSet, ntree = 500, mtry = i, importance = TRUE)
   predValid <- predict(model3, ValidSet, type = "class")
   a[i-2] = mean(predValid == ValidSet$employment_status)
 }
@@ -90,7 +95,7 @@ a
 plot(3:8,a)
 
 # Compare with Decision Tree
-model_dt = train(employment_status ~ ., data = TrainSet, method = "rpart")
+model_dt = train(employment_status ~ prostate_cancer+skin_cancer+breast_cancer+hiv_aids+diabetes+heart_disease+hypertension+endometriosis+multiple_sclerosis+schizophrenia+kidney_disease+gastritis+alzheimer, data = TrainSet, method = "rpart")
 model_dt_1 = predict(model_dt, data = TrainSet)
 table(model_dt_1, TrainSet$employment_status)
 
@@ -114,7 +119,7 @@ library(pROC)
 library(mlbench)
 
 trControl <- trainControl(method = "repeatedcv", number = 10, repeats = 3)
-fit <- train(employment_status ~ ., data = TrainSet, method = "knn", tuneLength = 20, trControl = trControl)
+fit <- train(employment_status ~ prostate_cancer+skin_cancer+breast_cancer+hiv_aids+diabetes+heart_disease+hypertension+endometriosis+multiple_sclerosis+schizophrenia+kidney_disease+gastritis+alzheimer, data = TrainSet, method = "knn", tuneLength = 20, trControl = trControl)
 fit
 plot(fit)
 varImp(fit)
