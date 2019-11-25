@@ -1,0 +1,1201 @@
+---
+title: "final_result"
+author: "Abdelrehim Sabri (500998232)"
+date: '2019-11-25'
+output:
+  word_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Install R packages
+
+```{r install_rmarkdown, eval=FALSE}
+#install.packages("rpart")
+#install.packages("caret")
+#install.packages("e1071")
+#install.packages("randomForest")
+#install.packages("corrplot")
+#install.packages("caretEnsemble")
+#install.packages("lsr")
+```
+
+## Exploratory Data Analysis
+
+```{r }
+options(warm=-1)
+library(rsample)  # data splitting
+library(lubridate)
+library(ggplot2)  # data visualization
+library(randomForest)
+library(dplyr) # data transformation
+#library(rpart)
+library(caret) # implementing with caret
+library(caretEnsemble)
+library(e1071)
+library(corrplot)
+library(unbalanced)
+library(mlbench)
+library(pROC)
+library(lsr)
+```
+
+## Includes functions to clean datasets
+
+Read datasets from csv file
+```{r }
+build_clean_dataset <- function() {
+  datasetloc = "C:/Projects/temp/clean/Health_Care_History.csv"
+  if (file.exists(datasetloc)) {
+    alldata <- read.csv(file=datasetloc, header = T)
+  }
+  return(alldata)
+}
+```
+
+Convert the date to age and group them into four groups (0-25, 26-40, 41-50, 50-65, 65+)
+```{r }
+age <- function(dob, age.day = today(), units = "years", floor = TRUE) {
+  calc.age = interval(dob, age.day) / duration(num = 1, units = units)
+  if (floor) return(as.integer(floor(calc.age)))
+  
+  return(calc.age)
+}
+
+get_age_group <- function(a) {
+  ifelse(a<25,25, ifelse(a<40, 40, ifelse(a<50,50,65)))
+}
+```
+
+Group the countries of the patients based on ethnic groups
+```{r }
+east_europe <- c('Ukraine','Russia','Poland','Czech Republic','Hungary')
+west_europe <- c('Austria','Belgium','France','Germany','Italy','Netherlands','Portugal','Spain','Switzerland')
+north_europe <- c('Sweden', 'Finland', 'Denmark')
+british <- c('England','Scotland','Ireland')
+
+get_ethnic_group <- function(country) {
+  ifelse((country %in% east_europe), 'east_europe',
+         ifelse((country %in% west_europe) ,'west_europe',
+                ifelse((country %in% north_europe), 'north_europe',
+                       ifelse((country %in% british), 'british',
+                              country))))
+}
+```
+
+Read the dataset and remove patient ids from the analysis 
+```{r}
+patients <- build_clean_dataset()
+
+#remove the patient ids from the dataset
+patients <- patients[,-1]
+str(patients)
+```
+
+```{r}
+summary(patients)
+```
+From the summary, there are no NaN nor missing data in the dataset.
+
+Fix the education column values by fixing the misspelled words
+```{r}
+patients$education <- ifelse(patients$education == 'highscool', as.character('highschool'), as.character(patients$education))
+patients$education <- ifelse(as.factor(patients$education) == 'phD/MD', as.character('phd/md'), as.character(patients$education))
+patients$education <- as.factor(patients$education)
+```
+
+Group the ancestry countries to ethnic groups
+```{r}
+patients$ancestry <- as.factor(get_ethnic_group(patients$ancestry))
+```
+
+Convert the date of birth into age and group them into 25 40 50 65
+```{r}
+patients$age <- age(patients$dob)
+patients$age <- get_age_group(age(patients$dob))
+```
+
+For the analysis purposes, move each disease to separate column with binary values, where 0: patient does not has the disease and 1: patient has the disease 
+```{r}
+get_binary_value <- function(value, compare_to) {
+  ifelse(value==compare_to,1,0)
+}
+patients$prostate_cancer <- get_binary_value(patients$disease,'prostate cancer')
+patients$skin_cancer <- get_binary_value(patients$disease,'skin cancer')
+patients$breast_cancer <- get_binary_value(patients$disease,'breast cancer')
+patients$hiv_aids <- get_binary_value(patients$disease,'HIV/AIDS')
+patients$diabetes <- get_binary_value(patients$disease,'diabetes')
+patients$heart_disease <- get_binary_value(patients$disease,'heart disease')
+patients$hypertension <- get_binary_value(patients$disease,'hypertension')
+patients$endometriosis <- get_binary_value(patients$disease,'endometriosis')
+patients$multiple_sclerosis <- get_binary_value(patients$disease,'multiple sclerosis')
+patients$schizophrenia <- get_binary_value(patients$disease,'schizophrenia')
+patients$kidney_disease <- get_binary_value(patients$disease,'kidney disease')
+patients$gastritis <- get_binary_value(patients$disease,'gastritis')
+patients$alzheimer <- get_binary_value(patients$disease,'Alzheimer disease')
+str(patients)
+```
+
+## Use barplots for the distribution of the categorical columns
+
+Draw a bar plot to count the total number of diseases in the dataset
+```{r}
+par(las=2) # make label text perpendicular to axis
+par(mar=c(5,8,4,2)) # increase y-axis margin.
+
+disease_counts <- table(patients$disease)
+barplot(sort(disease_counts, decreasing = TRUE), main="Disease Names", 
+        xlab="Diseases Frequency", 
+        col=rainbow(20),
+        horiz=TRUE,
+        cex.names=0.8,
+        xlim = c(0, 350))
+```
+
+Observation : Male are more sick than Female
+```{r}
+gender_counts <- table(patients$gender)
+barplot(sort(gender_counts, decreasing = TRUE), main="Gender", 
+        col=rainbow(20), las=1)
+```
+
+Observation : age group that are more sick
+```{r}
+age_breaks <- c(0,25,40,65,100)
+tags <- c("[0-25)","[26-40)", "[41-65)", "[65+)")
+age_group_tags <- cut(patients$age, 
+                  breaks=age_breaks, 
+                  include.lowest=TRUE, 
+                  right=FALSE, 
+                  labels=tags)
+summary(age_group_tags)
+#age_counts <- table(patients$age)
+age_counts <- table(age_group_tags)
+barplot(sort(age_counts, decreasing = TRUE), main="Age",
+        col=rainbow(20), las=1)
+```
+
+Observation : Disease and Gender distrubution
+```{r}
+disease_name = c(as.character(unique(patients$disease)))
+
+for (d in disease_name) {
+  gender_disease_counts <- subset(patients, patients$disease == d)
+  gender_disease_counts <- table(gender_disease_counts$gender)
+  barplot(gender_disease_counts, main=d, col=rainbow(20), las=1)
+}
+```
+
+Observation : Disease and ancestry distrubution
+```{r}
+for (d in disease_name) {
+  ancestry_disease_counts <- subset(patients, patients$disease == d)
+  ancestry_disease_counts <- table(ancestry_disease_counts$ancestry)
+  barplot(ancestry_disease_counts, main=d, col=rainbow(20), las=1)
+}
+```
+## Plots for dependent variables
+
+Observation : Disease and age distrubution
+```{r}
+for (d in disease_name) {
+  age_disease_counts <- subset(patients, patients$disease == d)
+  #age_disease_counts <- table(age_disease_counts$age_group_tags)
+  age_disease_counts <- table(age_disease_counts$age)
+  barplot(age_counts, main=d, col=rainbow(20), las=1)
+}
+```
+
+
+Observation : Disease and employment status distrubution
+```{r}
+for (d in disease_name) {
+  emp_disease_counts <- subset(patients, patients$disease == d)
+  emp_disease_counts <- table(emp_disease_counts$employment_status)
+  barplot(emp_disease_counts, main=d, col=rainbow(20), las=1)
+}
+```
+Observation : Disease and number of children
+```{r}
+for (d in disease_name) {
+  child_disease_counts <- subset(patients, patients$disease == d)
+  child_disease_counts <- table(child_disease_counts$children)
+  barplot(child_disease_counts, main=d, col=rainbow(20), las=1)
+}
+```
+Observation : Disease and avg commute
+```{r}
+for (d in disease_name) {
+  comm_disease_counts <- subset(patients, patients$disease == d)
+  comm_disease_counts <- table(comm_disease_counts$avg_commute)
+  barplot(comm_disease_counts, main=d, col=rainbow(20), las=1)
+}
+```
+Observation : Disease and daily internet use
+```{r}
+for (d in disease_name) {
+  net_disease_counts <- subset(patients, patients$disease == d)
+  net_disease_counts <- table(net_disease_counts$daily_internet_use)
+  barplot(net_disease_counts, main=d, col=rainbow(20), las=1)
+}
+```
+Observation : Disease and available vehicles
+```{r}
+for (d in disease_name) {
+  veh_disease_counts <- subset(patients, patients$disease == d)
+  veh_disease_counts <- table(veh_disease_counts$available_vehicles)
+  barplot(veh_disease_counts, main=d, col=rainbow(20), las=1)
+}
+```
+Observation : Disease and military service
+```{r}
+for (d in disease_name) {
+  mil_disease_counts <- subset(patients, patients$disease == d)
+  mil_disease_counts <- table(mil_disease_counts$military_service)
+  barplot(mil_disease_counts, main=d, col=rainbow(20), las=1)
+}
+```
+
+## Feature Selection
+
+Will do feature selection using two methods, Chi-squared and Cramer's V after splitting and balancing the dataset for three diseases (alzheimer, hypertension, skin cancer)
+
+Feature the selection Alsheimer using Chi-squared 
+```{r}
+alzheimer_set <- select(patients, gender, age, employment_status, education, marital_status, ancestry, available_vehicles, avg_commute,zipcode, children,daily_internet_use,military_service, alzheimer)
+FeatureTrain <- sample(nrow(alzheimer_set), 0.7*nrow(alzheimer_set), replace = FALSE)
+FeatureTrainSet <- alzheimer_set[FeatureTrain,]
+FeatureValidSet <- alzheimer_set[-FeatureTrain,]
+
+response <- as.factor(patients$alzheimer)
+input <- select(patients, gender, age, employment_status, education, marital_status, ancestry, available_vehicles, avg_commute,zipcode, children,daily_internet_use,military_service)
+
+data <- ubOver(X=input, Y=response)
+alzheime_os_dataset <- cbind(data$X, class=data$Y)
+
+chisq.test(alzheime_os_dataset$class, alzheime_os_dataset$gender)
+chisq.test(alzheime_os_dataset$class, alzheime_os_dataset$age)
+chisq.test(alzheime_os_dataset$class, alzheime_os_dataset$education)
+chisq.test(alzheime_os_dataset$class, alzheime_os_dataset$marital_status)
+chisq.test(alzheime_os_dataset$class, alzheime_os_dataset$zipcode)
+chisq.test(alzheime_os_dataset$class, alzheime_os_dataset$employment_status)
+chisq.test(alzheime_os_dataset$class, alzheime_os_dataset$children)
+chisq.test(alzheime_os_dataset$class, alzheime_os_dataset$ancestry)
+chisq.test(alzheime_os_dataset$class, alzheime_os_dataset$avg_commute)
+chisq.test(alzheime_os_dataset$class, alzheime_os_dataset$daily_internet_use)
+chisq.test(alzheime_os_dataset$class, alzheime_os_dataset$available_vehicles)
+chisq.test(alzheime_os_dataset$class, alzheime_os_dataset$military_service)
+
+
+alzheime_os_dataset %>%
+  filter(class == "1") %>%
+  select_if(is.numeric) %>%
+  cor() %>%
+  corrplot::corrplot()
+```
+
+Feature the selection Alsheimer using Cramer's V 
+```{r}
+cramersV(alzheime_os_dataset$class, alzheime_os_dataset$gender)
+cramersV(alzheime_os_dataset$class, alzheime_os_dataset$age)
+cramersV(alzheime_os_dataset$class, alzheime_os_dataset$education)
+cramersV(alzheime_os_dataset$class, alzheime_os_dataset$marital_status)
+cramersV(alzheime_os_dataset$class, alzheime_os_dataset$zipcode)
+cramersV(alzheime_os_dataset$class, alzheime_os_dataset$employment_status)
+cramersV(alzheime_os_dataset$class, alzheime_os_dataset$children)
+cramersV(alzheime_os_dataset$class, alzheime_os_dataset$ancestry)
+cramersV(alzheime_os_dataset$class, alzheime_os_dataset$avg_commute)
+cramersV(alzheime_os_dataset$class, alzheime_os_dataset$daily_internet_use)
+cramersV(alzheime_os_dataset$class, alzheime_os_dataset$available_vehicles)
+cramersV(alzheime_os_dataset$class, alzheime_os_dataset$military_service)
+```
+
+Feature the selection Hypertension using Chi-squared
+```{r}
+hypertension_set <- select(patients, gender, age, employment_status, education, marital_status, ancestry, available_vehicles, avg_commute,zipcode, children,daily_internet_use,military_service, hypertension)
+FeatureTrain <- sample(nrow(hypertension_set), 0.7*nrow(hypertension_set), replace = FALSE)
+FeatureTrainSet <- hypertension_set[FeatureTrain,]
+FeatureValidSet <- hypertension_set[-FeatureTrain,]
+
+response <- as.factor(patients$hypertension)
+input <- select(patients, gender, age, employment_status, education, marital_status, ancestry, available_vehicles, avg_commute,zipcode, children,daily_internet_use,military_service)
+
+data <- ubOver(X=input, Y=response)
+hypertension_os_dataset <- cbind(data$X, class=data$Y)
+
+chisq.test(hypertension_os_dataset$class, hypertension_os_dataset$gender)
+chisq.test(hypertension_os_dataset$class, hypertension_os_dataset$age)
+chisq.test(hypertension_os_dataset$class, hypertension_os_dataset$education)
+chisq.test(hypertension_os_dataset$class, hypertension_os_dataset$marital_status)
+chisq.test(hypertension_os_dataset$class, hypertension_os_dataset$zipcode)
+chisq.test(hypertension_os_dataset$class, hypertension_os_dataset$employment_status)
+chisq.test(hypertension_os_dataset$class, hypertension_os_dataset$children)
+chisq.test(hypertension_os_dataset$class, hypertension_os_dataset$ancestry)
+chisq.test(hypertension_os_dataset$class, hypertension_os_dataset$avg_commute)
+chisq.test(hypertension_os_dataset$class, hypertension_os_dataset$daily_internet_use)
+chisq.test(hypertension_os_dataset$class, hypertension_os_dataset$available_vehicles)
+chisq.test(hypertension_os_dataset$class, hypertension_os_dataset$military_service)
+```
+
+Feature the selection Hypertension using Cramer's V 
+```{r}
+cramersV(hypertension_os_dataset$class, hypertension_os_dataset$gender)
+cramersV(hypertension_os_dataset$class, hypertension_os_dataset$age)
+cramersV(hypertension_os_dataset$class, hypertension_os_dataset$education)
+cramersV(hypertension_os_dataset$class, hypertension_os_dataset$marital_status)
+cramersV(hypertension_os_dataset$class, hypertension_os_dataset$zipcode)
+cramersV(hypertension_os_dataset$class, hypertension_os_dataset$employment_status)
+cramersV(hypertension_os_dataset$class, hypertension_os_dataset$children)
+cramersV(hypertension_os_dataset$class, hypertension_os_dataset$ancestry)
+cramersV(hypertension_os_dataset$class, hypertension_os_dataset$avg_commute)
+cramersV(hypertension_os_dataset$class, hypertension_os_dataset$daily_internet_use)
+cramersV(hypertension_os_dataset$class, hypertension_os_dataset$available_vehicles)
+cramersV(hypertension_os_dataset$class, hypertension_os_dataset$military_service)
+```
+
+Feature the selection Skin Cancer using Chi-squared
+```{r}
+skin_cancer_set <- select(patients, gender, age, employment_status, education, marital_status, ancestry, available_vehicles, avg_commute,zipcode, children,daily_internet_use,military_service, skin_cancer)
+FeatureTrain <- sample(nrow(skin_cancer_set), 0.7*nrow(skin_cancer_set), replace = FALSE)
+FeatureTrainSet <- skin_cancer_set[FeatureTrain,]
+FeatureValidSet <- skin_cancer_set[-FeatureTrain,]
+
+response <- as.factor(patients$skin_cancer)
+input <- select(patients, gender, age, employment_status, education, marital_status, ancestry, available_vehicles, avg_commute,zipcode, children,daily_internet_use,military_service)
+
+data <- ubOver(X=input, Y=response)
+skin_cancer_os_dataset <- cbind(data$X, class=data$Y)
+
+chisq.test(skin_cancer_os_dataset$class, skin_cancer_os_dataset$gender)
+chisq.test(skin_cancer_os_dataset$class, skin_cancer_os_dataset$age)
+chisq.test(skin_cancer_os_dataset$class, skin_cancer_os_dataset$education)
+chisq.test(skin_cancer_os_dataset$class, skin_cancer_os_dataset$marital_status)
+chisq.test(skin_cancer_os_dataset$class, skin_cancer_os_dataset$zipcode)
+chisq.test(skin_cancer_os_dataset$class, skin_cancer_os_dataset$employment_status)
+chisq.test(skin_cancer_os_dataset$class, skin_cancer_os_dataset$children)
+chisq.test(skin_cancer_os_dataset$class, skin_cancer_os_dataset$ancestry)
+chisq.test(skin_cancer_os_dataset$class, skin_cancer_os_dataset$avg_commute)
+chisq.test(skin_cancer_os_dataset$class, skin_cancer_os_dataset$daily_internet_use)
+chisq.test(skin_cancer_os_dataset$class, skin_cancer_os_dataset$available_vehicles)
+chisq.test(skin_cancer_os_dataset$class, skin_cancer_os_dataset$military_service)
+```
+
+Feature the selection Skin Cancer using Cramer's V
+```{r}
+cramersV(skin_cancer_os_dataset$class, skin_cancer_os_dataset$gender)
+cramersV(skin_cancer_os_dataset$class, skin_cancer_os_dataset$age)
+cramersV(skin_cancer_os_dataset$class, skin_cancer_os_dataset$education)
+cramersV(skin_cancer_os_dataset$class, skin_cancer_os_dataset$marital_status)
+cramersV(skin_cancer_os_dataset$class, skin_cancer_os_dataset$zipcode)
+cramersV(skin_cancer_os_dataset$class, skin_cancer_os_dataset$employment_status)
+cramersV(skin_cancer_os_dataset$class, skin_cancer_os_dataset$children)
+cramersV(skin_cancer_os_dataset$class, skin_cancer_os_dataset$ancestry)
+cramersV(skin_cancer_os_dataset$class, skin_cancer_os_dataset$avg_commute)
+cramersV(skin_cancer_os_dataset$class, skin_cancer_os_dataset$daily_internet_use)
+cramersV(skin_cancer_os_dataset$class, skin_cancer_os_dataset$available_vehicles)
+cramersV(skin_cancer_os_dataset$class, skin_cancer_os_dataset$military_service)
+```
+
+## Modeling
+
+After having better understanding of the data, will begin preparing for modeling in order to predict diseases.
+
+The process will be divided the process into steps:
+1. Dealing with the Imbalance
+2. Define algorithms
+3. Testing algorithms
+
+## Dealing with the Imbalance
+
+From the exploratory analysis abovem the dependent variable is imbalanced. There are many alternatives to tackle this problem:
+* Over-sampling
+* Under-sampling
+* Synthetic Minority Over-Sampling Technique (SMOTE) Sampling
+* Cost Sensitive Learning
+
+For this dataset, will use over-sampling and SMOTE technique.
+
+## Patients with alzheimer
+```{r}
+#Convert all columns to factor
+patients[] <- lapply( patients, factor) # the "[]" keeps the dataframe structure
+ col_names <- names(patients)
+ patients[col_names] <- lapply(patients[col_names], factor)
+ 
+#See the data before balancing
+barplot(table(patients$alzheimer), xlab=colnames(patients$alzheimer))
+
+#filter the dataset and have only alzheimer disease as the target 
+alzheimer_set <- select(patients, gender, age, employment_status, education, marital_status, ancestry, available_vehicles,zipcode, children,military_service, alzheimer)
+
+#The data were partitioned into a test and training set using a 70/30 split.
+train <- sample(nrow(alzheimer_set), 0.7*nrow(alzheimer_set), replace = FALSE)
+  TrainSet <- alzheimer_set[train,]
+  ValidSet <- alzheimer_set[-train,]
+  
+response <- as.factor(patients$alzheimer)
+input <- select(patients, gender, age, employment_status, education, marital_status, ancestry)
+```
+
+### Excerice the Undersampling, oversampling, and smote against the test dataset
+
+## Logistic Regression, Randomforest, and Naive Bayes Models
+
+```{r}
+  #initialize variables
+  us_glm_accuracy <- c()
+  us_glm_precision <- c()
+  us_glm_recall <- c()
+  us_glm_f1 <- c()
+  
+  os_glm_accuracy <- c()
+  os_glm_precision <- c()
+  os_glm_recall <- c()
+  os_glm_f1 <- c()
+  
+  smote_glm_accuracy <- c()
+  smote_glm_precision <- c()
+  smote_glm_recall <- c()
+  smote_glm_f1 <- c()
+  
+  us_rf_accuracy <- c()
+  us_rf_precision <- c()
+  us_rf_recall <- c()
+  us_rf_f1 <- c()
+  
+  os_rf_accuracy <- c()
+  os_rf_precision <- c()
+  os_rf_recall <- c()
+  os_rf_f1 <- c()
+  
+  smote_rf_accuracy <- c()
+  smote_rf_precision <- c()
+  smote_rf_recall <- c()
+  smote_rf_f1 <- c()
+  
+  us_nb_accuracy <- c()
+  us_nb_precision <- c()
+  us_nb_recall <- c()
+  us_nb_f1 <- c()
+  
+  os_nb_accuracy <- c()
+  os_nb_precision <- c()
+  os_nb_recall <- c()
+  os_nb_f1 <- c()
+  
+  smote_nb_accuracy <- c()
+  smote_nb_precision <- c()
+  smote_nb_recall <- c()
+  smote_nb_f1 <- c()
+  
+  #use the 10-fold cross-validation and repeate the step 3 times
+  train_control <- trainControl(method = "cv", number = 10)
+  metric <- "Accuracy"
+  mtry <- sqrt(ncol(alzheimer_set))
+  tunegrid <- expand.grid(.mtry=mtry)    
+```
+
+```{r}
+  # iterate throug the sampling and model 10 times and get the mean to get the best model for the dataset prediction
+  for (i in 1:10) {
+    
+    seed <- 999+i
+    set.seed(seed)
+    
+    #run the undersampling
+    data <- ubUnder(X=input, Y=response, perc=40, method="percPos")
+    us_dataset <- cbind(data$X, class=data$Y)
+    
+    #run the oversampling
+    data <- ubOver(X=input, Y=response)
+    os_dataset <- cbind(data$X, class=data$Y)
+    
+    #run the smote
+    data <- ubSMOTE(X=input, Y=response)
+    smote_dataset <- cbind(data$X, class=data$Y)
+    
+    #run the logistic regression for the undersampling
+    glm_mod <- caret::train(class~.,data=us_dataset, trControl = train_control, method="glm", family="binomial", tuneLength = 5)
+    pred = predict(glm_mod, newdata=ValidSet)
+    us_cm <- confusionMatrix(data=pred, as.factor(ValidSet$alzheimer), mode='everything')
+    us_glm_accuracy <- c(us_glm_accuracy, us_cm$overall['Accuracy'])
+    us_glm_precision <- c(us_glm_precision, us_cm$byClass['Precision'])
+    us_glm_recall <- c(us_glm_recall, us_cm$byClass['Recall'])
+    us_glm_f1 <- c(us_glm_f1, us_cm$byClass['F1'])
+    
+    #run the logistic regression for the oversampling
+    glm_mod <- caret::train(class~.,data=os_dataset, trControl = train_control, method="glm", family="binomial", tuneLength = 5)
+    pred = predict(glm_mod, newdata=ValidSet)
+    os_cm <- confusionMatrix(data=pred, as.factor(ValidSet$alzheimer), mode='everything')
+    os_glm_accuracy <- c(os_glm_accuracy, os_cm$overall['Accuracy'])
+    os_glm_precision <- c(os_glm_precision, os_cm$byClass['Precision'])
+    os_glm_recall <- c(os_glm_recall, os_cm$byClass['Recall'])
+    os_glm_f1 <- c(os_glm_f1, os_cm$byClass['F1'])
+    
+    #run the logistic regression for the smote
+    glm_mod <- caret::train(class~.,data=smote_dataset, trControl = train_control, method="glm", family="binomial", tuneLength = 5)
+    pred = predict(glm_mod, newdata=ValidSet)
+    cm_smote <- confusionMatrix(data=pred, as.factor(ValidSet$alzheimer), mode='everything')
+    smote_glm_accuracy <- c(smote_glm_accuracy, cm_smote$overall['Accuracy'])
+    smote_glm_precision <- c(smote_glm_precision, cm_smote$byClass['Precision'])
+    smote_glm_recall <- c(smote_glm_recall, cm_smote$byClass['Recall'])
+    smote_glm_f1 <- c(smote_glm_f1, cm_smote$byClass['F1'])
+
+    
+    #run the random forest for the undersampling
+    rf_mod <- caret::train(class~., data=us_dataset, method="rf", metric=metric, tuneGrid=tunegrid, trControl=train_control)
+    pred = predict(rf_mod, newdata=ValidSet)
+    us_cm <- confusionMatrix(data=pred, as.factor(ValidSet$alzheimer), mode='everything')
+    us_rf_accuracy <- c(us_rf_accuracy, us_cm$overall['Accuracy'])
+    us_rf_precision <- c(us_rf_precision, us_cm$byClass['Precision'])
+    us_rf_recall <- c(us_rf_recall, us_cm$byClass['Recall'])
+    us_rf_f1 <- c(us_rf_f1, us_cm$byClass['F1'])
+    
+    #run the random forest for the oversampling
+    rf_mod <- caret::train(class~., data=os_dataset, method="rf", metric=metric, tuneGrid=tunegrid, trControl=train_control)
+    pred = predict(rf_mod, newdata=ValidSet)
+    os_cm <- confusionMatrix(data=pred, as.factor(ValidSet$alzheimer), mode='everything')
+    os_rf_accuracy <- c(os_rf_accuracy, os_cm$overall['Accuracy'])
+    os_rf_precision <- c(os_rf_precision, os_cm$byClass['Precision'])
+    os_rf_recall <- c(os_rf_recall, os_cm$byClass['Recall'])
+    os_rf_f1 <- c(os_rf_f1, os_cm$byClass['F1'])
+    
+    #run the random forest for the smote
+    rf_mod <- caret::train(class~., data=smote_dataset, method="rf", metric=metric, tuneGrid=tunegrid, trControl=train_control)
+    pred = predict(rf_mod, newdata=ValidSet)
+    cm_smote <- confusionMatrix(data=pred, as.factor(ValidSet$alzheimer), mode='everything')
+    smote_rf_accuracy <- c(smote_rf_accuracy, cm_smote$overall['Accuracy'])
+    smote_rf_precision <- c(smote_rf_precision, cm_smote$byClass['Precision'])
+    smote_rf_recall <- c(smote_rf_recall, cm_smote$byClass['Recall'])
+    smote_rf_f1 <- c(smote_rf_f1, cm_smote$byClass['F1'])
+    
+    #run the naive byes for the undersampling
+    nb_mod <- caret::train(class~., data=us_dataset, method="nb", trControl=train_control)
+    pred = predict(nb_mod, newdata=ValidSet)
+    us_cm <- confusionMatrix(data=pred, as.factor(ValidSet$alzheimer), mode='everything')
+    us_nb_accuracy <- c(us_nb_accuracy, us_cm$overall['Accuracy'])
+    us_nb_precision <- c(us_nb_precision, us_cm$byClass['Precision'])
+    us_nb_recall <- c(us_nb_recall, us_cm$byClass['Recall'])
+    us_nb_f1 <- c(us_nb_f1, us_cm$byClass['F1'])
+
+    #run the naive byes for the oversampling
+    nb_mod <- caret::train(class~., data=os_dataset, method="nb", trControl=train_control)
+    pred = predict(nb_mod, newdata=ValidSet)
+    os_cm <- confusionMatrix(data=pred, as.factor(ValidSet$alzheimer), mode='everything')
+    os_nb_accuracy <- c(os_nb_accuracy, os_cm$overall['Accuracy'])
+    os_nb_precision <- c(os_nb_precision, os_cm$byClass['Precision'])
+    os_nb_recall <- c(os_nb_recall, os_cm$byClass['Recall'])
+    os_nb_f1 <- c(os_nb_f1, os_cm$byClass['F1'])
+    
+    #run the naive byes for the smote
+    nb_mod <- caret::train(class~., data=smote_dataset, method="nb", trControl=train_control)
+    pred = predict(nb_mod, newdata=ValidSet)
+    cm_smote <- confusionMatrix(data=pred, as.factor(ValidSet$alzheimer), mode='everything')
+    smote_nb_accuracy <- c(smote_nb_accuracy, cm_smote$overall['Accuracy'])
+    smote_nb_precision <- c(smote_nb_precision, cm_smote$byClass['Precision'])
+    smote_nb_recall <- c(smote_nb_recall, cm_smote$byClass['Recall'])
+    smote_nb_f1 <- c(smote_nb_f1, cm_smote$byClass['F1'])
+  }
+  
+```
+
+
+
+
+##################################################################################################################################
+
+
+## Result of the alzheimer analysis
+
+The data were partitioned into a test and training set using a 70/30 split.
+```{r}
+df <- data.frame(us_glm_accuracy, os_glm_accuracy, smote_glm_accuracy, us_rf_accuracy, os_rf_accuracy, smote_rf_accuracy, us_nb_accuracy, os_nb_accuracy, smote_nb_accuracy)
+
+us_glm_accuracy
+os_glm_accuracy
+smote_glm_accuracy
+us_rf_accuracy
+os_rf_accuracy
+smote_rf_accuracy
+us_nb_accuracy
+os_nb_accuracy
+smote_nb_accuracy
+
+us_glm_precision
+os_glm_precision
+smote_glm_precision
+us_rf_precision
+os_rf_precision
+smote_rf_precision
+us_nb_precision
+os_nb_precision
+smote_nb_precision
+
+us_glm_recall
+os_glm_recall
+smote_glm_recall
+us_rf_recall
+os_rf_recall
+smote_rf_recall
+us_nb_recall
+os_nb_recall
+smote_nb_recall
+
+us_glm_f1
+os_glm_f1
+smote_glm_f1
+us_rf_f1
+os_rf_f1
+smote_rf_f1
+us_nb_f1
+os_nb_f1
+smote_nb_f1
+
+c1 <- rainbow(10)
+c2 <- rainbow(10, alpha=0.2)
+c3 <- rainbow(10, v=0.7)
+boxplot(df, col=c2, medcol=c3, whiskcol=c1, staplecol=c3, boxcol=c3, outcol=c3, pch=23, cex=2)
+
+mean(us_nb_accuracy)
+mean(us_nb_precision)
+mean(us_nb_recall)
+mean(us_nb_f1)
+
+mean(os_nb_accuracy)
+mean(os_nb_precision)
+mean(os_nb_recall)
+mean(os_nb_f1)
+
+mean(smote_nb_accuracy)
+mean(smote_nb_precision)
+mean(smote_nb_recall)
+mean(smote_nb_f1)
+
+a <- matrix(
+  c(mean(us_glm_accuracy),mean(us_glm_precision),mean(us_glm_recall),mean(us_glm_f1),
+    mean(os_glm_accuracy),mean(os_glm_precision),mean(os_glm_recall),mean(os_glm_f1),
+    mean(smote_glm_accuracy),mean(smote_glm_precision),mean(smote_glm_recall),mean(smote_glm_f1)),
+  nrow=3,
+  ncol=4,
+  byrow = TRUE
+)
+
+a
+```
+
+## Patients with hypertension
+```{r}
+#See the data before balancing
+barplot(table(patients$hypertension), xlab=colnames(patients$hypertension))
+
+#filter the dataset and have only hypertension disease as the target 
+hypertension_set <- select(patients, gender, age, employment_status, education, marital_status, ancestry, available_vehicles, avg_commute,zipcode, children,daily_internet_use,military_service, hypertension)
+
+#The data were partitioned into a test and training set using a 70/30 split.
+train <- sample(nrow(hypertension_set), 0.7*nrow(hypertension_set), replace = FALSE)
+  TrainSet <- hypertension_set[train,]
+  ValidSet <- hypertension_set[-train,]
+  
+response <- as.factor(patients$hypertension)
+input <- select(patients, gender, age, employment_status, education, marital_status, ancestry)
+```
+
+### Excerice the Undersampling, oversampling, and smote against the test dataset
+
+## Logistic Regression, Randomforest, and Naive Bayes Models
+```{r}
+  #initialize variables
+  us_glm_accuracy <- c()
+  us_glm_precision <- c()
+  us_glm_recall <- c()
+  us_glm_f1 <- c()
+  
+  os_glm_accuracy <- c()
+  os_glm_precision <- c()
+  os_glm_recall <- c()
+  os_glm_f1 <- c()
+  
+  smote_glm_accuracy <- c()
+  smote_glm_precision <- c()
+  smote_glm_recall <- c()
+  smote_glm_f1 <- c()
+  
+  us_rf_accuracy <- c()
+  us_rf_precision <- c()
+  us_rf_recall <- c()
+  us_rf_f1 <- c()
+  
+  os_rf_accuracy <- c()
+  os_rf_precision <- c()
+  os_rf_recall <- c()
+  os_rf_f1 <- c()
+  
+  smote_rf_accuracy <- c()
+  smote_rf_precision <- c()
+  smote_rf_recall <- c()
+  smote_rf_f1 <- c()
+  
+  us_nb_accuracy <- c()
+  us_nb_precision <- c()
+  us_nb_recall <- c()
+  us_nb_f1 <- c()
+  
+  os_nb_accuracy <- c()
+  os_nb_precision <- c()
+  os_nb_recall <- c()
+  os_nb_f1 <- c()
+  
+  smote_nb_accuracy <- c()
+  smote_nb_precision <- c()
+  smote_nb_recall <- c()
+  smote_nb_f1 <- c()
+  
+  #use the 10-fold cross-validation and repeate the step 3 times
+  train_control <- trainControl(method = "cv", number = 10)
+  metric <- "Accuracy"
+  mtry <- sqrt(ncol(alzheimer_set))
+  tunegrid <- expand.grid(.mtry=mtry)    
+```
+
+```{r}
+  # iterate throug the sampling and model 10 times and get the mean to get the best model for the dataset prediction
+  for (i in 1:10) {
+    
+    #run the undersampling
+    data <- ubUnder(X=input, Y=response, perc=40, method="percPos")
+    us_dataset <- cbind(data$X, class=data$Y)
+    
+    #run the oversampling
+    data <- ubOver(X=input, Y=response)
+    os_dataset <- cbind(data$X, class=data$Y)
+    
+    #run the smote
+    data <- ubSMOTE(X=input, Y=response)
+    smote_dataset <- cbind(data$X, class=data$Y)
+    
+    #use the 10-fold cross-validation and repeate the step 3 times
+    train_control <- trainControl(method = "repeatedcv", number = 10, repeats=3, savePredictions = TRUE)
+    
+    #run the logistic regression for the undersampling
+    glm_mod <- caret::train(class~.,data=us_dataset, trControl = train_control, method="glm", family="binomial", tuneLength = 5)
+    pred = predict(glm_mod, newdata=ValidSet)
+    us_cm <- confusionMatrix(data=pred, as.factor(ValidSet$hypertension), mode='everything')
+    us_glm_accuracy <- c(us_glm_accuracy, us_cm$overall['Accuracy'])
+    us_glm_precision <- c(us_glm_precision, us_cm$byClass['Precision'])
+    us_glm_recall <- c(us_glm_recall, us_cm$byClass['Recall'])
+    us_glm_f1 <- c(us_glm_f1, us_cm$byClass['F1'])
+    
+    #run the logistic regression for the oversampling
+    glm_mod <- caret::train(class~.,data=os_dataset, trControl = train_control, method="glm", family="binomial", tuneLength = 5)
+    pred = predict(glm_mod, newdata=ValidSet)
+    os_cm <- confusionMatrix(data=pred, as.factor(ValidSet$hypertension), mode='everything')
+    os_glm_accuracy <- c(os_glm_accuracy, os_cm$overall['Accuracy'])
+    os_glm_precision <- c(os_glm_precision, os_cm$byClass['Precision'])
+    os_glm_recall <- c(os_glm_recall, os_cm$byClass['Recall'])
+    os_glm_f1 <- c(os_glm_f1, os_cm$byClass['F1'])
+    
+    #run the logistic regression for the smote
+    glm_mod <- caret::train(class~.,data=smote_dataset, trControl = train_control, method="glm", family="binomial", tuneLength = 5)
+    pred = predict(glm_mod, newdata=ValidSet)
+    cm_smote <- confusionMatrix(data=pred, as.factor(ValidSet$hypertension), mode='everything')
+    smote_glm_accuracy <- c(smote_glm_accuracy, cm_smote$overall['Accuracy'])
+    smote_glm_precision <- c(smote_glm_precision, cm_smote$byClass['Precision'])
+    smote_glm_recall <- c(smote_glm_recall, cm_smote$byClass['Recall'])
+    smote_glm_f1 <- c(smote_glm_f1, cm_smote$byClass['F1'])
+    
+    #run the random forest for the undersampling
+    rf_mod <- caret::train(class~., data=us_dataset, method="rf", metric=metric, tuneGrid=tunegrid, trControl=train_control)
+    pred = predict(rf_mod, newdata=ValidSet)
+    us_cm <- confusionMatrix(data=pred, as.factor(ValidSet$hypertension), mode='everything')
+    us_rf_accuracy <- c(us_rf_accuracy, us_cm$overall['Accuracy'])
+    us_rf_precision <- c(us_rf_precision, us_cm$byClass['Precision'])
+    us_rf_recall <- c(us_rf_recall, us_cm$byClass['Recall'])
+    us_rf_f1 <- c(us_rf_f1, us_cm$byClass['F1'])
+    
+    #run the random forest for the oversampling
+    rf_mod <- caret::train(class~., data=os_dataset, method="rf", metric=metric, tuneGrid=tunegrid, trControl=train_control)
+    pred = predict(rf_mod, newdata=ValidSet)
+    os_cm <- confusionMatrix(data=pred, as.factor(ValidSet$hypertension), mode='everything')
+    os_rf_accuracy <- c(os_rf_accuracy, os_cm$overall['Accuracy'])
+    os_rf_precision <- c(os_rf_precision, os_cm$byClass['Precision'])
+    os_rf_recall <- c(os_rf_recall, os_cm$byClass['Recall'])
+    os_rf_f1 <- c(os_rf_f1, os_cm$byClass['F1'])
+    
+    #run the random forest for the smote
+    rf_mod <- caret::train(class~., data=smote_dataset, method="rf", metric=metric, tuneGrid=tunegrid, trControl=train_control)
+    pred = predict(rf_mod, newdata=ValidSet)
+    cm_smote <- confusionMatrix(data=pred, as.factor(ValidSet$hypertension), mode='everything')
+    smote_rf_accuracy <- c(smote_rf_accuracy, cm_smote$overall['Accuracy'])
+    smote_rf_precision <- c(smote_rf_precision, cm_smote$byClass['Precision'])
+    smote_rf_recall <- c(smote_rf_recall, cm_smote$byClass['Recall'])
+    smote_rf_f1 <- c(smote_rf_f1, cm_smote$byClass['F1'])
+    
+    #run the naive byes for the undersampling
+    nb_mod <- caret::train(class~., data=us_dataset, method="nb", trControl=train_control)
+    pred = predict(nb_mod, newdata=ValidSet)
+    us_cm <- confusionMatrix(data=pred, as.factor(ValidSet$hypertension), mode='everything')
+    us_nb_accuracy <- c(us_nb_accuracy, us_cm$overall['Accuracy'])
+    us_nb_precision <- c(us_nb_precision, us_cm$byClass['Precision'])
+    us_nb_recall <- c(us_nb_recall, us_cm$byClass['Recall'])
+    us_nb_f1 <- c(us_nb_f1, us_cm$byClass['F1'])
+
+    #run the naive byes for the oversampling
+    nb_mod <- caret::train(class~., data=os_dataset, method="nb", trControl=train_control)
+    pred = predict(nb_mod, newdata=ValidSet)
+    os_cm <- confusionMatrix(data=pred, as.factor(ValidSet$hypertension), mode='everything')
+    os_nb_accuracy <- c(os_nb_accuracy, os_cm$overall['Accuracy'])
+    os_nb_precision <- c(os_nb_precision, os_cm$byClass['Precision'])
+    os_nb_recall <- c(os_nb_recall, os_cm$byClass['Recall'])
+    os_nb_f1 <- c(os_nb_f1, os_cm$byClass['F1'])
+    
+    #run the naive byes for the smote
+    nb_mod <- caret::train(class~., data=smote_dataset, method="nb", trControl=train_control)
+    pred = predict(nb_mod, newdata=ValidSet)
+    cm_smote <- confusionMatrix(data=pred, as.factor(ValidSet$hypertension), mode='everything')
+    smote_nb_accuracy <- c(smote_nb_accuracy, cm_smote$overall['Accuracy'])
+    smote_nb_precision <- c(smote_nb_precision, cm_smote$byClass['Precision'])
+    smote_nb_recall <- c(smote_nb_recall, cm_smote$byClass['Recall'])
+    smote_nb_f1 <- c(smote_nb_f1, cm_smote$byClass['F1'])
+  }
+  
+```
+
+
+## Result of the hypertension analysis
+
+The data were partitioned into a test and training set using a 70/30 split.
+```{r}
+df <- data.frame(us_glm_accuracy, os_glm_accuracy, smote_glm_accuracy, us_rf_accuracy, os_rf_accuracy, smote_rf_accuracy, us_nb_accuracy, os_nb_accuracy, smote_nb_accuracy)
+
+us_glm_accuracy
+os_glm_accuracy
+smote_glm_accuracy
+us_rf_accuracy
+os_rf_accuracy
+smote_rf_accuracy
+us_nb_accuracy
+os_nb_accuracy
+smote_nb_accuracy
+
+us_glm_precision
+os_glm_precision
+smote_glm_precision
+us_rf_precision
+os_rf_precision
+smote_rf_precision
+us_nb_precision
+os_nb_precision
+smote_nb_precision
+
+us_glm_recall
+os_glm_recall
+smote_glm_recall
+us_rf_recall
+os_rf_recall
+smote_rf_recall
+us_nb_recall
+os_nb_recall
+smote_nb_recall
+
+us_glm_f1
+os_glm_f1
+smote_glm_f1
+us_rf_f1
+os_rf_f1
+smote_rf_f1
+us_nb_f1
+os_nb_f1
+smote_nb_f1
+
+c1 <- rainbow(10)
+c2 <- rainbow(10, alpha=0.2)
+c3 <- rainbow(10, v=0.7)
+boxplot(df, col=c2, medcol=c3, whiskcol=c1, staplecol=c3, boxcol=c3, outcol=c3, pch=23, cex=2)
+
+mean(us_nb_accuracy)
+mean(us_nb_precision)
+mean(us_nb_recall)
+mean(us_nb_f1)
+
+mean(os_nb_accuracy)
+mean(os_nb_precision)
+mean(os_nb_recall)
+mean(os_nb_f1)
+
+mean(smote_nb_accuracy)
+mean(smote_nb_precision)
+mean(smote_nb_recall)
+mean(smote_nb_f1)
+
+a <- matrix(
+  c(mean(us_glm_accuracy),mean(us_glm_precision),mean(us_glm_recall),mean(us_glm_f1),
+    mean(os_glm_accuracy),mean(os_glm_precision),mean(os_glm_recall),mean(os_glm_f1),
+    mean(smote_glm_accuracy),mean(smote_glm_precision),mean(smote_glm_recall),mean(smote_glm_f1)),
+  nrow=3,
+  ncol=4,
+  byrow = TRUE
+)
+
+a
+```
+
+
+## Patients with skin cancer
+```{r}
+#See the data before balancing
+barplot(table(patients$skin_cancer), xlab=colnames(patients$skin_cancer))
+
+#filter the dataset and have only skin_cancer disease as the target 
+skin_cancer_set <- select(patients, gender, age, employment_status, education, marital_status, ancestry, available_vehicles, avg_commute,zipcode, children,daily_internet_use,military_service, skin_cancer)
+
+#The data were partitioned into a test and training set using a 70/30 split.
+train <- sample(nrow(skin_cancer_set), 0.7*nrow(skin_cancer_set), replace = FALSE)
+  TrainSet <- skin_cancer_set[train,]
+  ValidSet <- skin_cancer_set[-train,]
+  
+response <- as.factor(patients$skin_cancer)
+input <- select(patients, gender, age, employment_status, education, marital_status, ancestry)
+```
+
+### Excerice the Undersampling, oversampling, and smote against the test dataset
+
+## Logistic Regression, Randomforest, and Naive Bayes Models
+```{r}
+  #initialize variables
+  us_glm_accuracy <- c()
+  us_glm_precision <- c()
+  us_glm_recall <- c()
+  us_glm_f1 <- c()
+  
+  os_glm_accuracy <- c()
+  os_glm_precision <- c()
+  os_glm_recall <- c()
+  os_glm_f1 <- c()
+  
+  smote_glm_accuracy <- c()
+  smote_glm_precision <- c()
+  smote_glm_recall <- c()
+  smote_glm_f1 <- c()
+  
+  us_rf_accuracy <- c()
+  us_rf_precision <- c()
+  us_rf_recall <- c()
+  us_rf_f1 <- c()
+  
+  os_rf_accuracy <- c()
+  os_rf_precision <- c()
+  os_rf_recall <- c()
+  os_rf_f1 <- c()
+  
+  smote_rf_accuracy <- c()
+  smote_rf_precision <- c()
+  smote_rf_recall <- c()
+  smote_rf_f1 <- c()
+  
+  us_nb_accuracy <- c()
+  us_nb_precision <- c()
+  us_nb_recall <- c()
+  us_nb_f1 <- c()
+  
+  os_nb_accuracy <- c()
+  os_nb_precision <- c()
+  os_nb_recall <- c()
+  os_nb_f1 <- c()
+  
+  smote_nb_accuracy <- c()
+  smote_nb_precision <- c()
+  smote_nb_recall <- c()
+  smote_nb_f1 <- c()
+  
+  #use the 10-fold cross-validation and repeate the step 3 times
+  train_control <- trainControl(method = "cv", number = 10)
+  metric <- "Accuracy"
+  mtry <- sqrt(ncol(skin_cancer_set))
+  tunegrid <- expand.grid(.mtry=mtry)    
+```
+
+```{r}
+  # iterate throug the sampling and model 10 times and get the mean to get the best model for the dataset prediction
+  for (i in 1:10) {
+    
+    #run the undersampling
+    data <- ubUnder(X=input, Y=response, perc=40, method="percPos")
+    us_dataset <- cbind(data$X, class=data$Y)
+    
+    #run the oversampling
+    data <- ubOver(X=input, Y=response)
+    os_dataset <- cbind(data$X, class=data$Y)
+    
+    #run the smote
+    data <- ubSMOTE(X=input, Y=response)
+    smote_dataset <- cbind(data$X, class=data$Y)
+    
+    #use the 10-fold cross-validation and repeate the step 3 times
+    train_control <- trainControl(method = "repeatedcv", number = 10, repeats=3, savePredictions = TRUE)
+    
+    #run the logistic regression for the undersampling
+    glm_mod <- caret::train(class~.,data=us_dataset, trControl = train_control, method="glm", family="binomial", tuneLength = 5)
+    pred = predict(glm_mod, newdata=ValidSet)
+    us_cm <- confusionMatrix(data=pred, as.factor(ValidSet$skin_cancer), mode='everything')
+    us_glm_accuracy <- c(us_glm_accuracy, us_cm$overall['Accuracy'])
+    us_glm_precision <- c(us_glm_precision, us_cm$byClass['Precision'])
+    us_glm_recall <- c(us_glm_recall, us_cm$byClass['Recall'])
+    us_glm_f1 <- c(us_glm_f1, us_cm$byClass['F1'])
+    
+    #run the logistic regression for the oversampling
+    glm_mod <- caret::train(class~.,data=os_dataset, trControl = train_control, method="glm", family="binomial", tuneLength = 5)
+    pred = predict(glm_mod, newdata=ValidSet)
+    os_cm <- confusionMatrix(data=pred, as.factor(ValidSet$skin_cancer), mode='everything')
+    os_glm_accuracy <- c(os_glm_accuracy, os_cm$overall['Accuracy'])
+    os_glm_precision <- c(os_glm_precision, os_cm$byClass['Precision'])
+    os_glm_recall <- c(os_glm_recall, os_cm$byClass['Recall'])
+    os_glm_f1 <- c(os_glm_f1, os_cm$byClass['F1'])
+    
+    #run the logistic regression for the smote
+    glm_mod <- caret::train(class~.,data=smote_dataset, trControl = train_control, method="glm", family="binomial", tuneLength = 5)
+    pred = predict(glm_mod, newdata=ValidSet)
+    cm_smote <- confusionMatrix(data=pred, as.factor(ValidSet$skin_cancer), mode='everything')
+    smote_glm_accuracy <- c(smote_glm_accuracy, cm_smote$overall['Accuracy'])
+    smote_glm_precision <- c(smote_glm_precision, cm_smote$byClass['Precision'])
+    smote_glm_recall <- c(smote_glm_recall, cm_smote$byClass['Recall'])
+    smote_glm_f1 <- c(smote_glm_f1, cm_smote$byClass['F1'])
+    
+    #run the random forest for the undersampling
+    rf_mod <- caret::train(class~., data=us_dataset, method="rf", metric=metric, tuneGrid=tunegrid, trControl=train_control)
+    pred = predict(rf_mod, newdata=ValidSet)
+    us_cm <- confusionMatrix(data=pred, as.factor(ValidSet$skin_cancer), mode='everything')
+    us_rf_accuracy <- c(us_rf_accuracy, us_cm$overall['Accuracy'])
+    us_rf_precision <- c(us_rf_precision, us_cm$byClass['Precision'])
+    us_rf_recall <- c(us_rf_recall, us_cm$byClass['Recall'])
+    us_rf_f1 <- c(us_rf_f1, us_cm$byClass['F1'])
+    
+    #run the random forest for the oversampling
+    rf_mod <- caret::train(class~., data=os_dataset, method="rf", metric=metric, tuneGrid=tunegrid, trControl=train_control)
+    pred = predict(rf_mod, newdata=ValidSet)
+    os_cm <- confusionMatrix(data=pred, as.factor(ValidSet$skin_cancer), mode='everything')
+    os_rf_accuracy <- c(os_rf_accuracy, os_cm$overall['Accuracy'])
+    os_rf_precision <- c(os_rf_precision, os_cm$byClass['Precision'])
+    os_rf_recall <- c(os_rf_recall, os_cm$byClass['Recall'])
+    os_rf_f1 <- c(os_rf_f1, os_cm$byClass['F1'])
+    
+    #run the random forest for the smote
+    rf_mod <- caret::train(class~., data=smote_dataset, method="rf", metric=metric, tuneGrid=tunegrid, trControl=train_control)
+    pred = predict(rf_mod, newdata=ValidSet)
+    cm_smote <- confusionMatrix(data=pred, as.factor(ValidSet$skin_cancer), mode='everything')
+    smote_rf_accuracy <- c(smote_rf_accuracy, cm_smote$overall['Accuracy'])
+    smote_rf_precision <- c(smote_rf_precision, cm_smote$byClass['Precision'])
+    smote_rf_recall <- c(smote_rf_recall, cm_smote$byClass['Recall'])
+    smote_rf_f1 <- c(smote_rf_f1, cm_smote$byClass['F1'])
+    
+    #run the naive byes for the undersampling
+    nb_mod <- caret::train(class~., data=us_dataset, method="nb", trControl=train_control)
+    pred = predict(nb_mod, newdata=ValidSet)
+    us_cm <- confusionMatrix(data=pred, as.factor(ValidSet$skin_cancer), mode='everything')
+    us_nb_accuracy <- c(us_nb_accuracy, us_cm$overall['Accuracy'])
+    us_nb_precision <- c(us_nb_precision, us_cm$byClass['Precision'])
+    us_nb_recall <- c(us_nb_recall, us_cm$byClass['Recall'])
+    us_nb_f1 <- c(us_nb_f1, us_cm$byClass['F1'])
+
+    #run the naive byes for the oversampling
+    nb_mod <- caret::train(class~., data=os_dataset, method="nb", trControl=train_control)
+    pred = predict(nb_mod, newdata=ValidSet)
+    os_cm <- confusionMatrix(data=pred, as.factor(ValidSet$skin_cancer), mode='everything')
+    os_nb_accuracy <- c(os_nb_accuracy, os_cm$overall['Accuracy'])
+    os_nb_precision <- c(os_nb_precision, os_cm$byClass['Precision'])
+    os_nb_recall <- c(os_nb_recall, os_cm$byClass['Recall'])
+    os_nb_f1 <- c(os_nb_f1, os_cm$byClass['F1'])
+    
+    #run the naive byes for the smote
+    nb_mod <- caret::train(class~., data=smote_dataset, method="nb", trControl=train_control)
+    pred = predict(nb_mod, newdata=ValidSet)
+    cm_smote <- confusionMatrix(data=pred, as.factor(ValidSet$skin_cancer), mode='everything')
+    smote_nb_accuracy <- c(smote_nb_accuracy, cm_smote$overall['Accuracy'])
+    smote_nb_precision <- c(smote_nb_precision, cm_smote$byClass['Precision'])
+    smote_nb_recall <- c(smote_nb_recall, cm_smote$byClass['Recall'])
+    smote_nb_f1 <- c(smote_nb_f1, cm_smote$byClass['F1'])
+  }
+  
+```
+
+
+## Result of the skin cancer analysis
+
+The data were partitioned into a test and training set using a 70/30 split.
+```{r}
+df <- data.frame(us_glm_accuracy, os_glm_accuracy, smote_glm_accuracy, us_rf_accuracy, os_rf_accuracy, smote_rf_accuracy, us_nb_accuracy, os_nb_accuracy, smote_nb_accuracy)
+
+us_glm_accuracy
+os_glm_accuracy
+smote_glm_accuracy
+us_rf_accuracy
+os_rf_accuracy
+smote_rf_accuracy
+us_nb_accuracy
+os_nb_accuracy
+smote_nb_accuracy
+
+us_glm_precision
+os_glm_precision
+smote_glm_precision
+us_rf_precision
+os_rf_precision
+smote_rf_precision
+us_nb_precision
+os_nb_precision
+smote_nb_precision
+
+us_glm_recall
+os_glm_recall
+smote_glm_recall
+us_rf_recall
+os_rf_recall
+smote_rf_recall
+us_nb_recall
+os_nb_recall
+smote_nb_recall
+
+us_glm_f1
+os_glm_f1
+smote_glm_f1
+us_rf_f1
+os_rf_f1
+smote_rf_f1
+us_nb_f1
+os_nb_f1
+smote_nb_f1
+
+c1 <- rainbow(10)
+c2 <- rainbow(10, alpha=0.2)
+c3 <- rainbow(10, v=0.7)
+boxplot(df, col=c2, medcol=c3, whiskcol=c1, staplecol=c3, boxcol=c3, outcol=c3, pch=23, cex=2)
+
+mean(us_nb_accuracy)
+mean(us_nb_precision)
+mean(us_nb_recall)
+mean(us_nb_f1)
+
+mean(os_nb_accuracy)
+mean(os_nb_precision)
+mean(os_nb_recall)
+mean(os_nb_f1)
+
+mean(smote_nb_accuracy)
+mean(smote_nb_precision)
+mean(smote_nb_recall)
+mean(smote_nb_f1)
+
+a <- matrix(
+  c(mean(us_glm_accuracy),mean(us_glm_precision),mean(us_glm_recall),mean(us_glm_f1),
+    mean(os_glm_accuracy),mean(os_glm_precision),mean(os_glm_recall),mean(os_glm_f1),
+    mean(smote_glm_accuracy),mean(smote_glm_precision),mean(smote_glm_recall),mean(smote_glm_f1)),
+  nrow=3,
+  ncol=4,
+  byrow = TRUE
+)
+
+a
+```
+
